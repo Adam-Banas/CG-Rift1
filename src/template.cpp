@@ -1,15 +1,14 @@
 #include <algorithm>
-#include <chrono>
-#include <cmath>
+#include <cassert>
 #include <iostream>
-#include <map>
-#include <random>
-#include <sstream>
 #include <string>
+#include <random>
+#include <unordered_set>
 #include <vector>
 
 using std::begin;
 using std::cerr;
+using std::cin;
 using std::cout;
 using std::end;
 using std::endl;
@@ -18,7 +17,6 @@ using std::ostream;
 using std::string;
 using std::vector;
 
-//#define TESTS
 #define DEBUG
 #pragma GCC optimize "-O3"
 
@@ -26,17 +24,14 @@ using std::vector;
 //--------------------------------- Configuration -------------------------------
 //-------------------------------------------------------------------------------
 
-constexpr int TIMEOUT = 98;
+constexpr int TIMEOUT    = 95;
+constexpr int MAP_SIZE   = 154;
+constexpr int MAP_PLAYER = 4;
+constexpr int POD_COST   = 20;
 
 //-------------------------------------------------------------------------------
 //----------------------------------- Constants ---------------------------------
 //-------------------------------------------------------------------------------
-
-//constexpr int ASH_SPEED    = 1000;
-//constexpr int SHOT_RANGE   = 2000;
-//constexpr int SHOT_RANGE2  = SHOT_RANGE * SHOT_RANGE;
-//constexpr int ZOMBIE_SPEED = 400;
-//constexpr double PI        = std::acos(-1);
 
 //-------------------------------------------------------------------------------
 //----------------------------------- Utilities ---------------------------------
@@ -50,18 +45,6 @@ inline auto& debugLog() noexcept
     static std::stringstream sink;
     return sink;
 #endif
-}
-
-int fibonacci[20];
-
-void initializeFibonacci() noexcept
-{
-    fibonacci[0] = 1;
-    fibonacci[1] = 2;
-    for (int i = 2; i < 20; ++i)
-    {
-        fibonacci[i] = fibonacci[i - 1] + fibonacci[i - 2];
-    }
 }
 
 // Returns a random number in [min, max]
@@ -81,131 +64,92 @@ inline const T& sample(const std::vector<T>& obj)
     return obj[randomNumber(0, obj.size() - 1)];
 }
 
-class Point
-{
-public:
-    constexpr explicit Point(int x = 0, int y = 0) noexcept : x(x), y(y) {}
-
-public:
-    int x;
-    int y;
-};
-
-bool operator==(const Point& lhs, const Point& rhs) noexcept
-{
-    return lhs.x == rhs.x && lhs.y == rhs.y;
-}
-
-bool operator!=(const Point& lhs, const Point& rhs) noexcept
-{
-    return !(lhs == rhs);
-}
-
-auto operator+(const Point& lhs, const Point& rhs) noexcept
-{
-    return Point(lhs.x + rhs.x, lhs.y + rhs.y);
-}
-
-// NOTICE: Needed for sorting algorithms
-bool operator<(const Point& lhs, const Point& rhs)
-{
-    if (lhs.x < rhs.x)
-    {
-        return true;
-    }
-    else if (lhs.x > rhs.x)
-    {
-        return false;
-    }
-    else
-    {
-        return lhs.y < rhs.y;
-    }
-}
-
-std::ostream& operator<<(ostream& out, const Point& obj)
-{
-    out << obj.x << ' ' << obj.y;
-    return out;
-}
-
-std::istream& operator>>(istream& in, Point& obj)
-{
-    in >> obj.x >> obj.y;
-    in.ignore();
-    return in;
-}
-
-// Distance squared, for faster calculations
-inline uint dist2(const Point& p1, const Point& p2) noexcept
-{
-    float dX = abs(p1.x - p2.x);
-    float dY = abs(p1.y - p2.y);
-    return dX * dX + dY * dY;
-}
-
-inline double dist(const Point& p1, const Point& p2) noexcept
-{
-    return sqrt(dist2(p1, p2));
-}
-
-auto toString(const Point& rhs)
-{
-    string result;
-
-    result = std::to_string(rhs.x) + " " + std::to_string(rhs.y);
-
-    return result;
-}
-
-bool flipCoin() noexcept
-{
-    return randomNumber(0, 1) == 1;
-}
-
-std::chrono::high_resolution_clock::time_point turnStart;
-
-inline double msPassed() noexcept
-{
-    return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
-               std::chrono::high_resolution_clock::now() - turnStart)
-        .count();
-}
-
-inline void startTurn() noexcept
-{
-    turnStart = std::chrono::high_resolution_clock::now();
-}
-
-inline bool isTimeout() noexcept
-{
-    return msPassed() >= TIMEOUT;
-}
-
 //-------------------------------------------------------------------------------
-//------------------------------------- Model -----------------------------------
+//----------------------------------- Model -------------------------------------
 //-------------------------------------------------------------------------------
 
 namespace model {
 
-class Action;
+int playerCount; // Number of players
+int myId;        // My ID
+
+class Map
+{
+public:
+    using Index   = int;
+    using Indexes = std::vector<int>;
+
+    // TODO: This is actually state, so it can evolve (e.g. in case of some simulation)
+    struct Cell
+    {
+        static constexpr int NEUTRAL = -1;
+
+        explicit Cell() noexcept { std::fill(begin(pods), end(pods), 0); }
+
+        int owner = NEUTRAL;
+        int pods[MAP_PLAYER];
+    };
+
+public:
+    const Indexes& getNeighbors(Index a) const noexcept;
+    Cell& getCell(Index a) noexcept;
+    auto getPlatinumSource(Index a) const noexcept;
+
+    void addLink(Index a, Index b) noexcept;
+    void setPlatinumSource(Index a, int value) noexcept;
+
+private:
+    int platinumSource[MAP_SIZE];
+    Indexes neighbors[MAP_SIZE];
+    Cell cells[MAP_SIZE];
+};
+
+Map map;
+
+const Map::Indexes& Map::getNeighbors(Index a) const noexcept
+{
+    assert((a % MAP_SIZE) == a);
+    return neighbors[a];
+}
+
+Map::Cell& Map::getCell(Index a) noexcept
+{
+    assert((a % MAP_SIZE) == a);
+    return cells[a];
+}
+
+auto Map::getPlatinumSource(Index a) const noexcept
+{
+    assert((a % MAP_SIZE) == a);
+    return platinumSource[a];
+}
+
+void Map::addLink(Index a, Index b) noexcept
+{
+    assert((a % MAP_SIZE) == a);
+    assert((b % MAP_SIZE) == b);
+    neighbors[a].push_back(b);
+    neighbors[b].push_back(a);
+}
+
+void Map::setPlatinumSource(Index a, int value) noexcept
+{
+    assert((a % MAP_SIZE) == a);
+    platinumSource[a] = value;
+}
+
+class Player
+{
+public:
+    int platinum;
+    std::vector<int> pods;
+};
 
 class State
 {
 public:
-    void simulateTurn(const Action& action) noexcept
-    {
-    }
-
-public:
-    //TODO: State data
+    Player me;
 };
-
-std::ostream& operator<<(ostream& out, const State& obj)
-{
-    //TODO: output state data
-    return out;
-}
 
 } // namespace model
 
@@ -215,16 +159,62 @@ std::ostream& operator<<(ostream& out, const State& obj)
 
 namespace view {
 
-auto readTurnInput(istream& in)
+void readInitializationInput(istream& in)
 {
-    //TODO: Read turn input
-
-    return model::State();
+    int player_count; // the amount of players (2 to 4)
+    int zoneCount;    // the amount of zones on the map
+    int linkCount;    // the amount of links between all zones
+    cin >> model::playerCount >> model::myId >> zoneCount >> linkCount;
+    debugLog() << "zoneCount: " << zoneCount << "\n";
+    cin.ignore();
+    for (int i = 0; i < zoneCount; i++)
+    {
+        int zoneId;         // this zone's ID (between 0 and zoneCount-1)
+        int platinumSource; // the amount of Platinum this zone can provide per game turn
+        cin >> zoneId >> platinumSource;
+        debugLog() << "zoneId: " << zoneId << std::endl;
+        model::map.setPlatinumSource(zoneId, platinumSource);
+        cin.ignore();
+    }
+    for (int i = 0; i < linkCount; i++)
+    {
+        int zone1;
+        int zone2;
+        cin >> zone1 >> zone2;
+        model::map.addLink(zone1, zone2);
+        cin.ignore();
+    }
 }
 
-void writeOutput(const model::Action& action)
+auto readTurnInput(istream& in)
 {
-    // TODO: Print / return output
+    model::State state;
+
+    int platinum; // my available Platinum
+    cin >> platinum;
+    state.me.platinum = platinum;
+    cin.ignore();
+    for (int i = 0; i < MAP_SIZE; i++)
+    {
+        int zoneId;  // this zone's ID
+        int ownerId; // the player who owns this zone (-1 otherwise)
+        int podsP0;  // player 0's PODs on this zone
+        int podsP1;  // player 1's PODs on this zone
+        int podsP2;  // player 2's PODs on this zone (always 0 for a two
+                     // player game)
+        int podsP3;  // player 3's PODs on this zone (always 0 for a two or
+                     // three player game)
+        cin >> zoneId >> ownerId >> podsP0 >> podsP1 >> podsP2 >> podsP3;
+        cin.ignore();
+        auto& cell   = model::map.getCell(zoneId);
+        cell.owner   = ownerId;
+        cell.pods[0] = podsP0;
+        cell.pods[1] = podsP1;
+        cell.pods[2] = podsP2;
+        cell.pods[3] = podsP3;
+    }
+
+    return state;
 }
 
 } // namespace view
@@ -232,40 +222,6 @@ void writeOutput(const model::Action& action)
 //-------------------------------------------------------------------------------
 //--------------------------- Artificial Intelligence ---------------------------
 //-------------------------------------------------------------------------------
-
-namespace ai {
-
-class MonteCarlo
-{
-public:
-    auto calcMove(model::State state) noexcept
-    {
-        std::pair<int, model::Action> best = {-1, model::Action()}, current;
-        int states                 = 0;
-        while (!isTimeout())
-        {
-            ++states;
-            //            debugLog() << "states: " << states << endl;
-            current = oneSimulation(state);
-            if (current.first > best.first)
-            {
-                best = current;
-            }
-        }
-        debugLog() << "Simulation end, states: " << states << endl;
-        return best.second;
-    }
-
-private:
-    std::pair<int, model::Action> oneSimulation(model::State state) const noexcept
-    {
-        // TODO: Perform one simulation, return score and action
-
-        return {0, model::Action()};
-    }
-};
-
-} // namespace ai
 
 //-------------------------------------------------------------------------------
 //------------------------------------ Main -------------------------------------
@@ -275,43 +231,43 @@ private:
 
 int main()
 {
-    initializeFibonacci();
-    int score(0);
+    view::readInitializationInput(cin);
 
-    ai::MonteCarlo monteCarlo;
-    std::chrono::duration<double, std::milli> lastTurnTime;
-    while (true)
+    // game loop
+    while (1)
     {
-        auto state = view::readTurnInput(std::cin);
-        debugLog() << "Last turn time: " << lastTurnTime.count() << " ms"
-                   << endl;
-        debugLog() << "Score: " << score << endl;
-        startTurn();
+        auto state = view::readTurnInput(cin);
 
-        auto move = monteCarlo.calcMove(state);
+        // Write an action using cout. DON'T FORGET THE "<< endl"
+        // To debug: cerr << "Debug messages..." << endl;
 
-        cout << move << endl;
+        // first line for movement commands, second line for POD purchase (see the protocol in the
+        // statement for details)
+        cout << "WAIT" << endl;
+        //        cout << "1 73" << endl;
 
-        lastTurnTime = std::chrono::high_resolution_clock::now() - turnStart;
+        while (state.me.platinum >= POD_COST)
+        {
+            int best      = randomNumber(0, MAP_SIZE - 1);
+            int bestValue = 0;
+            for (int i = 0; i < MAP_SIZE; ++i)
+            {
+                if (model::map.getPlatinumSource(i) > bestValue
+                    && model::map.getCell(i).owner == model::Map::Cell::NEUTRAL)
+                {
+                    best      = i;
+                    bestValue = model::map.getPlatinumSource(i);
+                }
+            }
+
+            state.me.platinum -= POD_COST;
+            cout << "1 " << best << " ";
+            model::map.getCell(best).owner = model::myId;
+        }
+        cout << endl;
     }
 }
 
 #else
-
-class Test
-{
-public:
-    static bool exampleTest()
-    {
-        return true;
-    }
-};
-
-int main()
-{
-    bool result;
-    result = Test::exampleTest();
-    cout << "Example test result: " << std::boolalpha << result << endl;
-}
 
 #endif
